@@ -17,7 +17,10 @@ if (-not $isAdmin) {
     try {
         Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm '$ScriptUrl' | iex`""
         return
-    } catch { Write-Host 'Admin declined - running with limited checks.' -ForegroundColor Yellow }
+    } catch {
+        Write-Host "Admin not granted ($($_.Exception.Message)) - running with limited checks." -ForegroundColor Yellow
+        Write-Host 'Tip: for full checks, open PowerShell with right-click > Run as administrator.' -ForegroundColor Yellow
+    }
 }
 
 $work = Join-Path $env:TEMP ('LaptopCheck-' + [guid]::NewGuid().ToString('N'))
@@ -35,17 +38,30 @@ try {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $tool 'LaptopCheck.ps1') -OutputDirectory $reports
 
     $html = Get-ChildItem $reports -Recurse -Filter inspection.html | Select-Object -First 1
-    if ($html) { Start-Process $html.FullName }
+    if ($html) {
+        Start-Process $html.FullName
+        Write-Host "`nReport opened in your browser." -ForegroundColor Cyan
+        Start-Sleep -Seconds 5   # let the browser finish loading before anything is deleted
+    }
 
+    function Clear-Keys { try { $Host.UI.RawUI.FlushInputBuffer() } catch {} }
+    Clear-Keys   # ignore keys pressed while the inspection was running
     Write-Host ''
-    $keep = Read-Host 'Type a folder/USB path to save a copy of the report (e.g. E:\), or just press Enter to delete everything'
-    if ($keep) {
-        Copy-Item -Path (Split-Path $html.FullName) -Destination $keep -Recurse -Force
-        Write-Host "Saved to $keep" -ForegroundColor Green
+    Write-Host 'Read the report in the browser. Keep this window open until you are done.' -ForegroundColor Cyan
+    while ($true) {
+        $keep = Read-Host 'Type a USB/folder path to save a copy (e.g. E:\), or type DONE to delete everything'
+        if ($keep -match '^\s*done\s*$') { break }
+        if ($keep -and $html -and (Test-Path $keep)) {
+            Copy-Item -Path (Split-Path $html.FullName) -Destination $keep -Recurse -Force
+            Write-Host "Saved to $keep" -ForegroundColor Green
+            break
+        }
+        if ($keep) { Write-Host "Path '$keep' not found - plug in the USB and try again." -ForegroundColor Yellow }
     }
 } finally {
     Set-Location $env:TEMP
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host 'Temporary files removed. Nothing left on this PC.' -ForegroundColor Green
+    try { $Host.UI.RawUI.FlushInputBuffer() } catch {}
     Read-Host 'Press Enter to close'
 }
